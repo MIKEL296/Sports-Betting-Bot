@@ -1,7 +1,6 @@
 import os
 import time
 import math
-import random
 import logging
 import aiohttp
 import asyncio
@@ -19,7 +18,7 @@ from telegram.ext import (
 )
 
 # -------------------------------------------------------------------
-# Environment & Configuration Setup
+# Environment & Configuration Setup (.env Integration)
 # -------------------------------------------------------------------
 load_dotenv()
 
@@ -31,7 +30,7 @@ DB_NAME = "todays_predictions.db"
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 ODDS_CACHE: Dict[str, Dict[str, Any]] = {}
-CACHE_TTL = 300  # 5 Minutes cache TTL
+CACHE_TTL = 1800  # 30 Minutes cache TTL
 CACHE_LOCK = asyncio.Lock()
 
 GLOBAL_SOCCER_LEAGUES = {
@@ -54,31 +53,6 @@ GLOBAL_SOCCER_LEAGUES = {
     "soccer_norway_eliteserien": "Eliteserien"
 }
 
-# Fallback match generator if API quota is depleted or off-peak
-FALLBACK_FIXTURES = [
-    {"home_team": "Arsenal", "away_team": "Chelsea", "league_name": "Premier League", "odds": [1.85, 3.60, 4.20]},
-    {"home_team": "Real Madrid", "away_team": "Barcelona", "league_name": "La Liga", "odds": [2.10, 3.50, 3.30]},
-    {"home_team": "Bayern Munich", "away_team": "Dortmund", "league_name": "Bundesliga", "odds": [1.65, 4.20, 4.80]},
-    {"home_team": "Inter Milan", "away_team": "AC Milan", "league_name": "Serie A", "odds": [2.05, 3.30, 3.60]},
-    {"home_team": "PSG", "away_team": "Marseille", "league_name": "Ligue 1", "odds": [1.50, 4.50, 6.00]},
-    {"home_team": "Boca Juniors", "away_team": "River Plate", "league_name": "Primera División - Argentina", "odds": [2.40, 3.00, 3.10]},
-    {"home_team": "Flamengo", "away_team": "Palmeiras", "league_name": "Brasil Série A", "odds": [2.15, 3.25, 3.40]},
-    {"home_team": "Ajax", "away_team": "PSV Eindhoven", "league_name": "Eredivisie", "odds": [2.30, 3.60, 2.80]},
-    {"home_team": "LA FC", "away_team": "LA Galaxy", "league_name": "MLS", "odds": [1.95, 3.70, 3.50]},
-    {"home_team": "Club America", "away_team": "Guadalajara", "league_name": "Liga MX", "odds": [1.90, 3.40, 4.00]},
-    {"home_team": "Shanghai Port", "away_team": "Shandong Taishan", "league_name": "Super League - China", "odds": [2.00, 3.50, 3.40]},
-    {"home_team": "Yokohama F Marinos", "away_team": "Kawasaki Frontale", "league_name": "J-League", "odds": [2.20, 3.40, 3.10]},
-    {"home_team": "Colo-Colo", "away_team": "Universidad de Chile", "league_name": "Chile Primera", "odds": [2.05, 3.20, 3.60]},
-    {"home_team": "Malmo FF", "away_team": "AIK", "league_name": "Allsvenskan", "odds": [1.80, 3.60, 4.35]},
-    {"home_team": "Bodo Glimt", "away_team": "Molde", "league_name": "Eliteserien", "odds": [1.90, 3.75, 3.60]},
-    {"home_team": "Leeds United", "away_team": "Leicester City", "league_name": "EFL Championship", "odds": [2.25, 3.30, 3.10]},
-    {"home_team": "Celtic", "away_team": "Rangers", "league_name": "Scottish Premiership", "odds": [2.00, 3.50, 3.50]},
-    {"home_team": "Benfica", "away_team": "Sporting CP", "league_name": "Primeira Liga", "odds": [2.20, 3.30, 3.20]},
-    {"home_team": "Galatasaray", "away_team": "Fenerbahce", "league_name": "Super Lig", "odds": [2.10, 3.40, 3.30]},
-    {"home_team": "Anderlecht", "away_team": "Club Brugge", "league_name": "Pro League", "odds": [2.40, 3.30, 2.90]}
-]
-
-# Markdown sanitizer to prevent Telegram parse errors
 def clean_md(text: str) -> str:
     if not text:
         return ""
@@ -155,7 +129,7 @@ def generate_multi_market_projections(home_p: float, draw_p: float, away_p: floa
     }
 
 # -------------------------------------------------------------------
-# SQLite Database Setup
+# Database Engine (Guaranteed Initialization)
 # -------------------------------------------------------------------
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -172,8 +146,10 @@ async def init_db():
             )
         """)
         await db.commit()
+    logging.info("✅ Database schema initialized successfully!")
 
 async def save_predictions_batch(matches_data: List[Dict[str, Any]]):
+    await init_db()  # Safety check
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_NAME) as db:
         for m in matches_data:
@@ -190,6 +166,7 @@ async def save_predictions_batch(matches_data: List[Dict[str, Any]]):
         await db.commit()
 
 async def get_history_logs(limit: int = 20) -> List[Dict[str, Any]]:
+    await init_db()  # Safety check
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
@@ -202,11 +179,11 @@ async def get_history_logs(limit: int = 20) -> List[Dict[str, Any]]:
             return [dict(row) for row in rows]
 
 # -------------------------------------------------------------------
-# Data Ingestion Engine with Automatic Fallback
+# Odds Ingestion Engine
 # -------------------------------------------------------------------
 async def fetch_todays_matches() -> List[Dict[str, Any]]:
     now_time = time.time()
-    cache_key = "todays_fixtures_all_global_expanded"
+    cache_key = "todays_fixtures_pure_live"
 
     if cache_key in ODDS_CACHE and (now_time - ODDS_CACHE[cache_key]["timestamp"] < CACHE_TTL):
         return ODDS_CACHE[cache_key]["data"]
@@ -221,14 +198,18 @@ async def fetch_todays_matches() -> List[Dict[str, Any]]:
             try:
                 now_utc = datetime.now(timezone.utc)
                 window_start = now_utc - timedelta(hours=3)
-                window_end = now_utc + timedelta(hours=48)
+                window_end = now_utc + timedelta(hours=36)
 
                 async with aiohttp.ClientSession() as session:
                     url = f"{BASE_URL}?apiKey={ODDS_API_KEY}"
-                    async with session.get(url, timeout=6) as resp:
+                    async with session.get(url, timeout=8) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            active_leagues = {item["key"]: item.get("title", item["key"]) for item in data if item.get("key", "").startswith("soccer_") and item.get("active", False)}
+                            active_leagues = {
+                                item["key"]: item.get("title", item["key"]) 
+                                for item in data 
+                                if item.get("key", "").startswith("soccer_") and item.get("active", False)
+                            }
                             if not active_leagues:
                                 active_leagues = GLOBAL_SOCCER_LEAGUES
 
@@ -236,9 +217,14 @@ async def fetch_todays_matches() -> List[Dict[str, Any]]:
                             async def fetch_league_odds(sport_key: str, label: str):
                                 async with sem:
                                     odds_url = f"{BASE_URL}/{sport_key}/odds/"
-                                    params = {"apiKey": ODDS_API_KEY, "regions": "uk,eu,us", "markets": "h2h", "oddsFormat": "decimal"}
+                                    params = {
+                                        "apiKey": ODDS_API_KEY, 
+                                        "regions": "uk,eu,us", 
+                                        "markets": "h2h", 
+                                        "oddsFormat": "decimal"
+                                    }
                                     try:
-                                        async with session.get(odds_url, params=params, timeout=6) as o_resp:
+                                        async with session.get(odds_url, params=params, timeout=8) as o_resp:
                                             if o_resp.status == 200:
                                                 fixtures = await o_resp.json()
                                                 matched = []
@@ -258,34 +244,16 @@ async def fetch_todays_matches() -> List[Dict[str, Any]]:
                             results = await asyncio.gather(*tasks)
                             for res in results:
                                 todays_matches.extend(res)
+                        else:
+                            logging.error(f"Odds API Error [{resp.status}]: Monthly quota exhausted or invalid key.")
             except Exception as e:
-                logging.error(f"API Error: {e}")
-
-        # If API returns fewer than 20 matches (due to quota or schedule), supplement with fallback dataset
-        if len(todays_matches) < 20:
-            for fb in FALLBACK_FIXTURES:
-                todays_matches.append({
-                    "home_team": fb["home_team"],
-                    "away_team": fb["away_team"],
-                    "league_name": fb["league_name"],
-                    "bookmakers": [{
-                        "key": "pinnacle",
-                        "markets": [{
-                            "key": "h2h",
-                            "outcomes": [
-                                {"name": fb["home_team"], "price": fb["odds"][0]},
-                                {"name": "Draw", "price": fb["odds"][1]},
-                                {"name": fb["away_team"], "price": fb["odds"][2]}
-                            ]
-                        }]
-                    }]
-                })
+                logging.error(f"Live Odds Fetch Exception: {e}")
 
         ODDS_CACHE[cache_key] = {"timestamp": now_time, "data": todays_matches}
         return todays_matches
 
 # -------------------------------------------------------------------
-# Telegram Keyboards & Router
+# Telegram Keyboards & Safe Chunk Sender
 # -------------------------------------------------------------------
 def build_main_menu() -> InlineKeyboardMarkup:
     keyboard = [
@@ -329,16 +297,24 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if data == "run_today_all":
-            status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ *Scanning global leagues and compiling top 20 predictions...*", parse_mode="Markdown")
+            status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ *Scanning live global leagues for upcoming predictions...*", parse_mode="Markdown")
             header, cards = await generate_todays_full_report()
             await status_msg.delete()
-            await send_clean_chunks(context.bot, chat_id, header, cards)
+            
+            if not cards:
+                await context.bot.send_message(chat_id=chat_id, text=header, parse_mode="Markdown")
+            else:
+                await send_clean_chunks(context.bot, chat_id, header, cards)
 
         elif data == "run_history":
             status_msg = await context.bot.send_message(chat_id=chat_id, text="📜 *Retrieving logged prediction history...*", parse_mode="Markdown")
             header, cards = await generate_history_report()
             await status_msg.delete()
-            await send_clean_chunks(context.bot, chat_id, header, cards)
+            
+            if not cards:
+                await context.bot.send_message(chat_id=chat_id, text=header, parse_mode="Markdown")
+            else:
+                await send_clean_chunks(context.bot, chat_id, header, cards)
 
         elif data == "run_advice":
             advice_text = get_staking_advice_text()
@@ -353,17 +329,25 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # -------------------------------------------------------------------
-# Clean Report Generators (20 Matches)
+# Clean Report Generators
 # -------------------------------------------------------------------
 async def generate_todays_full_report() -> tuple:
     matches = await fetch_todays_matches()
     today_str = datetime.now(timezone.utc).strftime("%d %b %Y")
 
+    if not matches:
+        return (
+            f"ℹ️ *No active live matches found in the next 36 hours.* \n\n"
+            "This occurs when your monthly API quota is exhausted or when bookmakers haven't posted head-to-head lines yet. "
+            "You can still check past predictions under **Prediction History Log**.", 
+            []
+        )
+
     target_matches = matches[:20]
     saved_batch = []
     cards = []
 
-    header = f"📅 *UPCOMING MATCH PREDICTIONS* (`{today_str}`)\n"
+    header = f"📅 *LIVE MATCH PREDICTIONS* (`{today_str}`)\n"
     header += f"📊 Fixtures: `{len(target_matches)}` | Picks: `{len(target_matches) * 3}`\n"
     header += "───────────────────────────\n\n"
 
@@ -473,17 +457,23 @@ def get_staking_advice_text() -> str:
     )
 
 # -------------------------------------------------------------------
-# Application Entry Point
+# Entry Point
 # -------------------------------------------------------------------
+async def startup_initialization():
+    await init_db()
+
 def main():
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN is missing or not set in .env!")
+
+    # Force DB init on startup loop
+    asyncio.run(startup_initialization())
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 Bot active with auto-fallback engine! Capped at 20 matches.")
+    print("🚀 Bot initialized! Table predictions_history created successfully.")
     app.run_polling()
 
 if __name__ == "__main__":
