@@ -158,7 +158,7 @@ def select_best_dynamic_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "prob": prob_btts
             })
 
-    # 4. Corners Over 9.5 or 10.5
+    # 4. Corners Over 9.5
     if total_xg >= 2.7:
         est_odds = 1.68
         prob_c = 0.58
@@ -353,7 +353,7 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
 async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
     cached_matches = await load_future_fixtures()
     if not cached_matches:
-        return "⚠️ *Database empty.* Tap **📖 Read 48h Matches (Store DB)** first[cite: 11]."
+        return "⚠️ *Database empty.* Tap **📥 Fetch & Sync Matches** first[cite: 11]."
 
     evaluated = []
     for f in cached_matches:
@@ -385,15 +385,15 @@ async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
     if len(selected_legs) < 4:
         return (
             "⚠️ *Not enough high-yield fixtures available right now.*\n\n"
-            "Tap **📖 Read 48h Matches** later as bookmakers post new lines."
+            "Tap **📥 Fetch & Sync Matches** later as bookmakers post new lines."
         )
 
     target_label = int(target_odds)
     report = [
-        f"🚀 *HIGH-YIELD {target_label} ODDS SLIP ({len(selected_legs)} TEAMS ONLY)*",
-        f"⏱️ Window: `Today & Tomorrow`",
-        f"📈 Combined Odds: `{current_odds:.2f}`",
-        f"🔒 Total Matches: `{len(selected_legs)} Games`",
+        f"🎯 *HIGH-YIELD {target_label} ODDS ACCUMULATOR*",
+        f"📊 *Strategy:* `Max {max_legs} Teams (High-Value Selections)`",
+        f"📈 *Total Combined Odds:* `{current_odds:.2f}`",
+        f"🔒 *Total Matches:* `{len(selected_legs)} Games`",
         "───────────────────────────\n"
     ]
 
@@ -406,18 +406,20 @@ async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
         )
 
     report.append("───────────────────────────")
-    report.append("💡 *Max 10 teams policy enforced to maximize high-odds payouts with minimal legs.*")
+    report.append("💡 *Optimized for maximum payout with compact leg limits.*")
     return "\n".join(report)
 
 # -------------------------------------------------------------------
-# Telegram Keyboards & Router
+# Redesigned UI Keyboards & Router
 # -------------------------------------------------------------------
 def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("📖 Read 48h Matches (Store DB)", callback_data="btn_read")],
+        [InlineKeyboardButton("📥 Fetch & Sync Matches (48h)", callback_data="btn_read")],
         [
-            InlineKeyboardButton("🔥 100 Odds (Max 9 Teams)", callback_data="pred_100"),
-            InlineKeyboardButton("🚀 200 Odds (Max 10 Teams)", callback_data="pred_200")
+            InlineKeyboardButton("🔥 Generate 100 Odds (Max 9 Teams)", callback_data="pred_100")
+        ],
+        [
+            InlineKeyboardButton("🚀 Generate 200 Odds (Max 10 Teams)", callback_data="pred_200")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -425,12 +427,19 @@ def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await init_db()
     count = await get_cached_fixtures_count()
+    
+    welcome_text = (
+        "👑 *HIGH-YIELD ACCUMULATOR HUB*\n"
+        "───────────────────────────\n"
+        f"📊 *Database Status:* `{count} Matches Cached`\n\n"
+        "Welcome to your professional football analytics dashboard. "
+        "Our engine constructs high-payout accumulators using **10 or fewer teams**, "
+        "leveraging high-value selections (1.55 – 1.95 odds) to reduce parlay risks.\n\n"
+        "👇 *Select an action below to get started:*"
+    )
+    
     await update.message.reply_text(
-        f"⚽ *High-Yield Odds Engine*\n\n"
-        f"📊 *Cached Matches Available:* `{count}`\n\n"
-        f"• **📖 Read 48h Matches**: Pulls upcoming matches into SQLite[cite: 11].\n"
-        f"• **High-Yield Policy**: Reaches 100 or 200 odds using **10 or fewer teams** via high-value value selections (1.55 - 1.95 odds range).\n\n"
-        f"Select your odds target below:",
+        welcome_text,
         parse_mode="Markdown",
         reply_markup=build_main_keyboard(count)
     )
@@ -444,7 +453,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_read":
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="⏳ *Scanning global leagues for upcoming matches...*",
+            text="🔄 *Syncing global leagues... Please wait.*",
             parse_mode="Markdown"
         )
         res = await run_read_and_store_pipeline()
@@ -453,21 +462,28 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = await get_cached_fixtures_count()
         if res.get("success"):
             text = (
-                f"✅ *Matches Synchronized!*\n\n"
-                f"Indexed `{res['count']}` fixtures across `{res['leagues']}` competitions.\n\n"
-                f"Select your target slip below:"
+                "✅ *Synchronization Successful!*\n"
+                "───────────────────────────\n"
+                f"• **Indexed Fixtures:** `{res['count']}`\n"
+                f"• **Active Competitions:** `{res['leagues']}`\n\n"
+                "👇 *Choose your target high-yield slip below:*"
             )
         else:
-            text = f"⚠️ *Notice:* {res.get('message')}"
+            text = f"⚠️ *Sync Notice:* {res.get('message')}"
 
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=build_main_keyboard(count))
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=build_main_keyboard(count)
+        )
 
     elif data in ["pred_100", "pred_200"]:
         count = await get_cached_fixtures_count()
         if count == 0:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⚠️ *No matches cached.* Tap **📖 Read 48h Matches (Store DB)** first[cite: 11].",
+                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Matches (48h)** first[cite: 11].",
                 parse_mode="Markdown",
                 reply_markup=build_main_keyboard(0)
             )
@@ -478,7 +494,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⚙️ *Building high-yield slip targeting {int(target)} odds with $\\le$ {max_legs} teams...*",
+            text=f"⚙️ *Compounding high-value markets for ~{int(target)} odds slip (Max {max_legs} teams)...*",
             parse_mode="Markdown"
         )
         report = await generate_high_yield_slip(target_odds=target, max_legs=max_legs)
@@ -519,7 +535,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 Bot active with high-yield 100/200 odds generator (Max 10 teams)...")
+    print("🚀 High-Yield Bot active with redesigned UI...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
