@@ -5,7 +5,7 @@ import logging
 import aiohttp
 import asyncio
 import aiosqlite
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
@@ -34,6 +34,7 @@ GLOBAL_MASSIVE_LEAGUES = {
     "soccer_epl": "Premier League (ENG)",
     "soccer_efl_champ": "Championship (ENG)",
     "soccer_england_league1": "League One (ENG)",
+    "soccer_england_league2": "League Two (ENG)",
     "soccer_england_efl_cup": "EFL Cup (ENG)",
     "soccer_fa_cup": "FA Cup (ENG)",
     "soccer_spain_la_liga": "La Liga (ESP)",
@@ -347,16 +348,19 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
 
     return {"success": False, "message": "Zero active fixtures found within rolling horizon."}
 
-# -------------------------------------------------------------------
-# Module 2: PREDICT (High-Yield Generator for 100/200 Odds with <= 10 Teams)
-# -------------------------------------------------------------------
-async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
+# Global tracker for consumed fixtures across slips to prevent overlap
+CONSUMED_FIXTURES_CACHE: set = set()
+
+async def generate_high_yield_slip(target_odds: float, max_legs: int, exclude_consumed: bool = False) -> Tuple[str, List[str]]:
     cached_matches = await load_future_fixtures()
     if not cached_matches:
-        return "⚠️ *Database empty.* Tap **📥 Fetch & Sync Matches** first[cite: 11]."
+        return "⚠️ *Database empty.* Tap **📥 Fetch & Sync Matches (48h)** first.", []
 
     evaluated = []
     for f in cached_matches:
+        # If requested, skip fixtures already used in the 100 odds slip
+        if exclude_consumed and f["fixture_id"] in CONSUMED_FIXTURES_CACHE:
+            continue
         cand = select_best_dynamic_market(f)
         if cand:
             evaluated.append(cand)
@@ -384,14 +388,17 @@ async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
 
     if len(selected_legs) < 4:
         return (
-            "⚠️ *Not enough high-yield fixtures available right now.*\n\n"
-            "Tap **📥 Fetch & Sync Matches** later as bookmakers post new lines."
+            "⚠️ *Not enough distinct high-yield fixtures available without overlapping.*\n\n"
+            "Try fetching fresh matches or re-syncing.", []
         )
+
+    # Track consumed fixture IDs
+    new_consumed = [leg["fixture_id"] for leg in selected_legs]
 
     target_label = int(target_odds)
     report = [
         f"🎯 *HIGH-YIELD {target_label} ODDS ACCUMULATOR*",
-        f"📊 *Strategy:* `Max {max_legs} Teams (High-Value Selections)`",
+        f"📊 *Strategy:* `Max {max_legs} Teams (Non-Overlapping Pool)`",
         f"📈 *Total Combined Odds:* `{current_odds:.2f}`",
         f"🔒 *Total Matches:* `{len(selected_legs)} Games`",
         "───────────────────────────\n"
@@ -406,8 +413,8 @@ async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
         )
 
     report.append("───────────────────────────")
-    report.append("💡 *Optimized for maximum payout with compact leg limits.*")
-    return "\n".join(report)
+    report.append("💡 *Completely independent fixture pool selected to eliminate cross-slip risk.*")
+    return "\n".join(report), new_consumed
 
 # -------------------------------------------------------------------
 # Redesigned UI Keyboards & Router
@@ -434,7 +441,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 *Database Status:* `{count} Matches Cached`\n\n"
         "Welcome to your professional football analytics dashboard. "
         "Our engine constructs high-payout accumulators using **10 or fewer teams**, "
-        "leveraging high-value selections (1.55 – 1.95 odds) to reduce parlay risks.\n\n"
+        "leveraging high-value selections (1.55 – 1.95 odds range) with **zero team overlap** between slips.\n\n"
         "👇 *Select an action below to get started:*"
     )
     
@@ -445,15 +452,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global CONSUMED_FIXTURES_CACHE
     query = update.callback_query
     await query.answer()
     data = query.data
     chat_id = query.message.chat_id
 
     if data == "btn_read":
+        # Reset consumed cache on new sync
+        CONSUMED_FIXTURES_CACHE.clear()
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="🔄 *Syncing global leagues... Please wait.*",
+            text="🔄 *Syncing global leagues & resetting pools... Please wait.*",
             parse_mode="Markdown"
         )
         res = await run_read_and_store_pipeline()
@@ -483,7 +493,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count == 0:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Matches (48h)** first[cite: 11].",
+                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Matches (48h)** first.",
                 parse_mode="Markdown",
                 reply_markup=build_main_keyboard(0)
             )
@@ -491,13 +501,19 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         target = 100.0 if data == "pred_100" else 200.0
         max_legs = 9 if data == "pred_100" else 10
+        exclude_flag = True if data == "pred_200" else False
 
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⚙️ *Compounding high-value markets for ~{int(target)} odds slip (Max {max_legs} teams)...*",
+            text=f"⚙️ *Compounding high-value markets for ~{int(target)} odds slip (Max {max_legs} teams, Non-Overlapping)...*",
             parse_mode="Markdown"
         )
-        report = await generate_high_yield_slip(target_odds=target, max_legs=max_legs)
+        report, new_ids = await generate_high_yield_slip(target_odds=target, max_legs=max_legs, exclude_consumed=exclude_flag)
+        
+        # If generating 100 odds, record its fixtures so 200 odds won't touch them
+        if data == "pred_100":
+            CONSUMED_FIXTURES_CACHE.update(new_ids)
+
         await status.delete()
 
         await context.bot.send_message(
@@ -535,7 +551,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 High-Yield Bot active with redesigned UI...")
+    print("🚀 High-Yield Bot active with non-overlapping multi-slip engine...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
