@@ -348,73 +348,102 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
 
     return {"success": False, "message": "Zero active fixtures found within rolling horizon."}
 
-# Global tracker for consumed fixtures across slips to prevent overlap
-CONSUMED_FIXTURES_CACHE: set = set()
-
-async def generate_high_yield_slip(target_odds: float, max_legs: int, exclude_consumed: bool = False) -> Tuple[str, List[str]]:
-    cached_matches = await load_future_fixtures()
-    if not cached_matches:
-        return "⚠️ *Database empty.* Tap **📥 Fetch & Sync Matches (48h)** first.", []
-
-    evaluated = []
-    for f in cached_matches:
-        # If requested, skip fixtures already used in the 100 odds slip
-        if exclude_consumed and f["fixture_id"] in CONSUMED_FIXTURES_CACHE:
-            continue
-        cand = select_best_dynamic_market(f)
-        if cand:
-            evaluated.append(cand)
-
-    evaluated.sort(key=lambda x: x["prob"], reverse=True)
-
+# -------------------------------------------------------------------
+# Module 2: Bot-Decided Dual Expert Slips Generator (Non-Overlapping)
+# -------------------------------------------------------------------
+def build_expert_slip_subset(evaluated_candidates: List[Dict[str, Any]], consumed_fixtures: set, max_legs: int = 6) -> Tuple[List[Dict[str, Any]], float]:
     selected_legs = []
     league_counts = {}
     current_odds = 1.0
 
-    for leg in evaluated:
+    for leg in evaluated_candidates:
+        if leg["fixture_id"] in consumed_fixtures:
+            continue
+
         l_name = leg["league_name"]
         if league_counts.get(l_name, 0) >= 1:
-            continue  # Enforce 1 pick per league
+            continue  # 1 pick per league
 
         if len(selected_legs) >= max_legs:
             break
 
         selected_legs.append(leg)
         league_counts[l_name] = league_counts.get(l_name, 0) + 1
+        consumed_fixtures.add(leg["fixture_id"])
         current_odds *= leg["odds"]
 
-        if current_odds >= target_odds:
-            break
+    return selected_legs, round(current_odds, 2)
 
-    if len(selected_legs) < 4:
-        return (
-            "⚠️ *Not enough distinct high-yield fixtures available without overlapping.*\n\n"
-            "Try fetching fresh matches or re-syncing.", []
-        )
+async def generate_todays_expert_slips() -> List[str]:
+    cached_matches = await load_future_fixtures()
+    if not cached_matches:
+        return ["⚠️ *Database empty.* Tap **📥 Fetch & Sync Matches (48h)** first[cite: 11]."]
 
-    # Track consumed fixture IDs
-    new_consumed = [leg["fixture_id"] for leg in selected_legs]
+    evaluated = []
+    for f in cached_matches:
+        cand = select_best_dynamic_market(f)
+        if cand:
+            evaluated.append(cand)
 
-    target_label = int(target_odds)
-    report = [
-        f"🎯 *HIGH-YIELD {target_label} ODDS ACCUMULATOR*",
-        f"📊 *Strategy:* `Max {max_legs} Teams (Non-Overlapping Pool)`",
-        f"📈 *Total Combined Odds:* `{current_odds:.2f}`",
-        f"🔒 *Total Matches:* `{len(selected_legs)} Games`",
-        "───────────────────────────\n"
-    ]
+    # Sort descending by confidence probability
+    evaluated.sort(key=lambda x: x["prob"], reverse=True)
 
-    for idx, leg in enumerate(selected_legs, 1):
-        report.append(
-            f"*{idx}. {clean_md(leg['fixture'])}* (`{leg['kickoff']}`)\n"
-            f"🏆 _{clean_md(leg['league_name'])}_\n"
-            f"🎯 *{leg['pick']}* ({leg['category']}) @ `{leg['odds']:.2f}`\n"
-            f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
-        )
+    consumed_fixtures = set()
 
-    report.append("───────────────────────────")
-    report.append("💡 *Completely independent fixture pool selected to eliminate cross-slip risk.*")
-    return "\n".join(report), new_consumed
+    # Build Slip 1 (Core Expert Value Ticket - 5 to 6 matches)
+    slip_1_legs, slip_1_odds = build_expert_slip_subset(evaluated, consumed_fixtures, max_legs=6)
+
+    # Build Slip 2 (High-Yield Expert Ticket - 5 to 6 matches, completely distinct fixtures)
+    slip_2_legs, slip_2_odds = build_expert_slip_subset(evaluated, consumed_fixtures, max_legs=6)
+
+    messages = []
+    today_str = datetime.now(timezone.utc).strftime("%a, %d %b %Y")
+
+    # Format Slip 1
+    if len(slip_1_legs) >= 3:
+        card_1 = [
+            f"🎯 *EXPERT SLIP 1 (CORE VALUE)*",
+            f"📅 Date: `{today_str}`",
+            f"📈 *Bot-Decided Odds:* `{slip_1_odds:.2f}`",
+            f"🔒 *Total Matches:* `{len(slip_1_legs)} Games`",
+            "───────────────────────────\n"
+        ]
+        for idx, leg in enumerate(slip_1_legs, 1):
+            card_1.append(
+                f"*{idx}. {clean_md(leg['fixture'])}* (`{leg['kickoff']}`)\n"
+                f"🏆 _{clean_md(leg['league_name'])}_\n"
+                f"🎯 *{leg['pick']}* ({leg['category']}) @ `{leg['odds']:.2f}`\n"
+                f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
+            )
+        card_1.append("───────────────────────────")
+        card_1.append("💡 *Optimized for balanced risk and steady daily success.*")
+        messages.append("\n".join(card_1))
+    else:
+        messages.append("⚠️ *Slip 1:* Not enough qualified matches today.")
+
+    # Format Slip 2
+    if len(slip_2_legs) >= 3:
+        card_2 = [
+            f"🔥 *EXPERT SLIP 2 (HIGH-YIELD)*",
+            f"📅 Date: `{today_str}`",
+            f"📈 *Bot-Decided Odds:* `{slip_2_odds:.2f}`",
+            f"🔒 *Total Matches:* `{len(slip_2_legs)} Games`",
+            "───────────────────────────\n"
+        ]
+        for idx, leg in enumerate(slip_2_legs, 1):
+            card_2.append(
+                f"*{idx}. {clean_md(leg['fixture'])}* (`{leg['kickoff']}`)\n"
+                f"🏆 _{clean_md(leg['league_name'])}_\n"
+                f"🎯 *{leg['pick']}* ({leg['category']}) @ `{leg['odds']:.2f}`\n"
+                f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
+            )
+        card_2.append("───────────────────────────")
+        card_2.append("💡 *Zero team overlap with Slip 1 to maximize portfolio safety.*")
+        messages.append("\n".join(card_2))
+    else:
+        messages.append("ℹ️ *Slip 2:* Need more distinct fixtures for a second separate ticket.")
+
+    return messages
 
 # -------------------------------------------------------------------
 # Redesigned UI Keyboards & Router
@@ -422,12 +451,7 @@ async def generate_high_yield_slip(target_odds: float, max_legs: int, exclude_co
 def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("📥 Fetch & Sync Matches (48h)", callback_data="btn_read")],
-        [
-            InlineKeyboardButton("🔥 Generate 100 Odds (Max 9 Teams)", callback_data="pred_100")
-        ],
-        [
-            InlineKeyboardButton("🚀 Generate 200 Odds (Max 10 Teams)", callback_data="pred_200")
-        ]
+        [InlineKeyboardButton("🎯 Generate Today's 2 Expert Slips", callback_data="gen_expert_slips")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -436,12 +460,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = await get_cached_fixtures_count()
     
     welcome_text = (
-        "👑 *HIGH-YIELD ACCUMULATOR HUB*\n"
+        "👑 *EXPERT ACCUMULATOR DASHBOARD*\n"
         "───────────────────────────\n"
         f"📊 *Database Status:* `{count} Matches Cached`\n\n"
         "Welcome to your professional football analytics dashboard. "
-        "Our engine constructs high-payout accumulators using **10 or fewer teams**, "
-        "leveraging high-value selections (1.55 – 1.95 odds range) with **zero team overlap** between slips.\n\n"
+        "Our engine automatically analyzes today's database pool, decides the optimal odds range, "
+        "and builds **2 independent, non-overlapping expert slips** with compact leg counts.\n\n"
         "👇 *Select an action below to get started:*"
     )
     
@@ -452,18 +476,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global CONSUMED_FIXTURES_CACHE
     query = update.callback_query
     await query.answer()
     data = query.data
     chat_id = query.message.chat_id
 
     if data == "btn_read":
-        # Reset consumed cache on new sync
-        CONSUMED_FIXTURES_CACHE.clear()
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="🔄 *Syncing global leagues & resetting pools... Please wait.*",
+            text="🔄 *Syncing global leagues... Please wait.*",
             parse_mode="Markdown"
         )
         res = await run_read_and_store_pipeline()
@@ -476,7 +497,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "───────────────────────────\n"
                 f"• **Indexed Fixtures:** `{res['count']}`\n"
                 f"• **Active Competitions:** `{res['leagues']}`\n\n"
-                "👇 *Choose your target high-yield slip below:*"
+                "👇 *Tap below to generate your 2 expert slips:*"
             )
         else:
             text = f"⚠️ *Sync Notice:* {res.get('message')}"
@@ -488,37 +509,35 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_main_keyboard(count)
         )
 
-    elif data in ["pred_100", "pred_200"]:
+    elif data == "gen_expert_slips":
         count = await get_cached_fixtures_count()
         if count == 0:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Matches (48h)** first.",
+                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Matches (48h)** first[cite: 11].",
                 parse_mode="Markdown",
                 reply_markup=build_main_keyboard(0)
             )
             return
 
-        target = 100.0 if data == "pred_100" else 200.0
-        max_legs = 9 if data == "pred_100" else 10
-        exclude_flag = True if data == "pred_200" else False
-
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⚙️ *Compounding high-value markets for ~{int(target)} odds slip (Max {max_legs} teams, Non-Overlapping)...*",
+            text="⚙️ *Analyzing fixture pool and generating optimal non-overlapping expert slips...*",
             parse_mode="Markdown"
         )
-        report, new_ids = await generate_high_yield_slip(target_odds=target, max_legs=max_legs, exclude_consumed=exclude_flag)
-        
-        # If generating 100 odds, record its fixtures so 200 odds won't touch them
-        if data == "pred_100":
-            CONSUMED_FIXTURES_CACHE.update(new_ids)
-
+        reports = await generate_todays_expert_slips()
         await status.delete()
+
+        for report_text in reports:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=report_text,
+                parse_mode="Markdown"
+            )
 
         await context.bot.send_message(
             chat_id=chat_id,
-            text=report,
+            text="✅ *Expert slips generated successfully.*",
             parse_mode="Markdown",
             reply_markup=build_main_keyboard(count)
         )
@@ -551,7 +570,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 High-Yield Bot active with non-overlapping multi-slip engine...")
+    print("🚀 Expert Bot active with bot-decided dual non-overlapping slips...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
