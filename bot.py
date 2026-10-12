@@ -30,74 +30,34 @@ DB_NAME = "todays_predictions.db"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# 45+ Active Worldwide Leagues to prevent match starvation on quiet days
 GLOBAL_MASSIVE_LEAGUES = {
-    # England
     "soccer_epl": "Premier League (ENG)",
     "soccer_efl_champ": "Championship (ENG)",
     "soccer_england_league1": "League One (ENG)",
-    "soccer_england_league2": "League Two (ENG)",
     "soccer_england_efl_cup": "EFL Cup (ENG)",
     "soccer_fa_cup": "FA Cup (ENG)",
-
-    # Spain
     "soccer_spain_la_liga": "La Liga (ESP)",
     "soccer_spain_segunda_division": "Segunda División (ESP)",
-    "soccer_spain_copa_del_rey": "Copa del Rey (ESP)",
-
-    # Germany
     "soccer_germany_bundesliga": "Bundesliga (GER)",
     "soccer_germany_bundesliga2": "2. Bundesliga (GER)",
-    "soccer_germany_liga3": "3. Liga (GER)",
-    "soccer_germany_dfb_pokal": "DFB-Pokal (GER)",
-
-    # Italy
     "soccer_italy_serie_a": "Serie A (ITA)",
     "soccer_italy_serie_b": "Serie B (ITA)",
-    "soccer_italy_coppa_italia": "Coppa Italia (ITA)",
-
-    # France
     "soccer_france_ligue_one": "Ligue 1 (FRA)",
     "soccer_france_ligue_two": "Ligue 2 (FRA)",
-
-    # UEFA Continental Tournaments
     "soccer_uefa_champs_league": "UEFA Champions League",
     "soccer_uefa_europa_league": "UEFA Europa League",
     "soccer_uefa_conference_league": "UEFA Conference League",
-
-    # Top European Competitions
     "soccer_netherlands_eredivisie": "Eredivisie (NED)",
-    "soccer_netherlands_eerste_divisie": "Eerste Divisie (NED)",
     "soccer_portugal_primeira_liga": "Primeira Liga (POR)",
     "soccer_belgium_first_div": "Pro League (BEL)",
     "soccer_turkey_super_league": "Süper Lig (TUR)",
     "soccer_scotland_premiership": "Premiership (SCO)",
-    "soccer_scotland_championship": "Championship (SCO)",
-    "soccer_greece_super_league": "Super League (GRE)",
-    "soccer_austria_bundesliga": "Bundesliga (AUT)",
-    "soccer_switzerland_superleague": "Super League (SUI)",
-    "soccer_denmark_superliga": "Superliga (DEN)",
-    "soccer_poland_ekstraklasa": "Ekstraklasa (POL)",
-    "soccer_sweden_allsvenskan": "Allsvenskan (SWE)",
-    "soccer_norway_eliteserien": "Eliteserien (NOR)",
-
-    # Americas
     "soccer_brazil_campeonato": "Série A (BRA)",
-    "soccer_brazil_serie_b": "Série B (BRA)",
-    "soccer_brazil_copa": "Copa do Brasil (BRA)",
     "soccer_argentina_primera_division": "Primera (ARG)",
-    "soccer_argentina_copa": "Copa Argentina (ARG)",
     "soccer_mexico_ligamx": "Liga MX (MEX)",
     "soccer_usa_mls": "MLS (USA)",
-    "soccer_usa_usl_championship": "USL (USA)",
-    "soccer_chile_camp_nacional": "Primera (CHI)",
-    "soccer_colombia_primera_a": "Primera A (COL)",
-
-    # Asia & Oceania
     "soccer_japan_j_league": "J1 League (JPN)",
-    "soccer_korea_kleague1": "K League 1 (KOR)",
-    "soccer_australia_aleague": "A-League (AUS)",
-    "soccer_saudi_arabia_pro_league": "Pro League (KSA)"
+    "soccer_korea_kleague1": "K League 1 (KOR)"
 }
 
 def clean_md(text: str) -> str:
@@ -137,7 +97,7 @@ def poisson_prob(lmbda: float, k: int) -> float:
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
 # -------------------------------------------------------------------
-# Multi-Market Projection Engine (Tuned for 1.40 - 1.75 Value Legs)
+# High-Value Multi-Market Engine (Tuned for 1.55 - 1.95 Odds)
 # -------------------------------------------------------------------
 def select_best_dynamic_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     prices = [f["home_odds"], f["draw_odds"], f["away_odds"]]
@@ -155,15 +115,15 @@ def select_best_dynamic_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     candidates = []
 
-    # 1. Straight Match Winner (Favorites between 1.40 and 1.80)
-    if home_p >= 0.50 and 1.40 <= f["home_odds"] <= 1.80:
+    # 1. Higher-Value Outright Favorites (Odds: 1.55 to 1.92)
+    if home_p >= 0.48 and 1.55 <= f["home_odds"] <= 1.92:
         candidates.append({
             "pick": f"{home_name} to Win",
             "category": "🏆 1X2",
             "odds": f["home_odds"],
             "prob": home_p
         })
-    elif away_p >= 0.50 and 1.40 <= f["away_odds"] <= 1.80:
+    elif away_p >= 0.48 and 1.55 <= f["away_odds"] <= 1.92:
         candidates.append({
             "pick": f"{away_name} to Win",
             "category": "🏆 1X2",
@@ -171,28 +131,14 @@ def select_best_dynamic_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "prob": away_p
         })
 
-    # 2. Over 1.5 & Over 2.5 Total Match Goals
-    prob_over_1_5 = sum(
-        poisson_prob(home_xg, h) * poisson_prob(away_xg, a)
-        for h in range(6) for a in range(6) if h + a > 1.5
-    )
-    if prob_over_1_5 >= 0.68:
-        est_odds = round(1.0 / (prob_over_1_5 * 1.05), 2)
-        if 1.35 <= est_odds <= 1.65:
-            candidates.append({
-                "pick": "Over 1.5 Goals",
-                "category": "⚽ Goals",
-                "odds": est_odds,
-                "prob": prob_over_1_5
-            })
-
+    # 2. Over 2.5 Total Goals (Target odds: 1.60 to 1.95)
     prob_over_2_5 = sum(
         poisson_prob(home_xg, h) * poisson_prob(away_xg, a)
         for h in range(6) for a in range(6) if h + a > 2.5
     )
-    if prob_over_2_5 >= 0.54:
+    if prob_over_2_5 >= 0.50:
         est_odds = round(1.0 / (prob_over_2_5 * 1.05), 2)
-        if 1.45 <= est_odds <= 1.82:
+        if 1.55 <= est_odds <= 1.95:
             candidates.append({
                 "pick": "Over 2.5 Goals",
                 "category": "⚽ Goals",
@@ -200,11 +146,11 @@ def select_best_dynamic_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "prob": prob_over_2_5
             })
 
-    # 3. Both Teams To Score (GG Yes)
+    # 3. Both Teams To Score - GG Yes (Target odds: 1.55 to 1.90)
     prob_btts = (1.0 - poisson_prob(home_xg, 0)) * (1.0 - poisson_prob(away_xg, 0))
-    if prob_btts >= 0.56:
+    if prob_btts >= 0.52:
         est_odds = round(1.0 / (prob_btts * 1.05), 2)
-        if 1.42 <= est_odds <= 1.78:
+        if 1.52 <= est_odds <= 1.92:
             candidates.append({
                 "pick": "Both Teams To Score (GG)",
                 "category": "⚽ Goals",
@@ -212,59 +158,20 @@ def select_best_dynamic_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "prob": prob_btts
             })
 
-    # 4. Corners & Booking Cards
-    est_corners = 8.5 + (total_xg * 0.95)
-    if est_corners >= 10.0:
-        prob_over_8_5_c = min(0.82, 0.50 + (est_corners - 9.5) * 0.12)
-        est_odds = round(1.0 / (prob_over_8_5_c * 1.06), 2)
-        if 1.35 <= est_odds <= 1.65:
-            candidates.append({
-                "pick": "Corners Over 8.5",
-                "category": "🚩 Corners",
-                "odds": est_odds,
-                "prob": prob_over_8_5_c
-            })
-
-    parity = 1.0 - abs(home_p - away_p)
-    est_cards = 3.2 + (parity * 1.6)
-    if est_cards >= 4.2:
-        prob_over_3_5_cards = min(0.80, 0.48 + (est_cards - 4.0) * 0.14)
-        est_odds = round(1.0 / (prob_over_3_5_cards * 1.06), 2)
-        if 1.35 <= est_odds <= 1.65:
-            candidates.append({
-                "pick": "Cards Over 3.5",
-                "category": "🟨 Cards",
-                "odds": est_odds,
-                "prob": prob_over_3_5_cards
-            })
-
-    # 5. Value Double Chance (Filtering out non-viable 1.15 odds)
-    p_1x = home_p + draw_p
-    if 0.64 <= p_1x <= 0.77:
-        est_odds = round(1.0 / (p_1x * 1.05), 2)
-        if 1.32 <= est_odds <= 1.55:
-            candidates.append({
-                "pick": f"{home_name} or Draw (1X)",
-                "category": "🛡️ Double Chance",
-                "odds": est_odds,
-                "prob": p_1x
-            })
-
-    p_x2 = away_p + draw_p
-    if 0.64 <= p_x2 <= 0.77:
-        est_odds = round(1.0 / (p_x2 * 1.05), 2)
-        if 1.32 <= est_odds <= 1.55:
-            candidates.append({
-                "pick": f"Draw or {away_name} (X2)",
-                "category": "🛡️ Double Chance",
-                "odds": est_odds,
-                "prob": p_x2
-            })
+    # 4. Corners Over 9.5
+    if total_xg >= 2.7:
+        est_odds = 1.68
+        prob_c = 0.58
+        candidates.append({
+            "pick": "Corners Over 9.5",
+            "category": "🚩 Corners",
+            "odds": est_odds,
+            "prob": prob_c
+        })
 
     if not candidates:
         return None
 
-    # Pick selection with highest risk-adjusted expected value
     candidates.sort(key=lambda x: (x["prob"] * x["odds"]), reverse=True)
     best = candidates[0]
     best["fixture_id"] = f["fixture_id"]
@@ -299,7 +206,6 @@ async def init_db():
             )
         """)
         await db.commit()
-    logging.info("SQLite database synchronized.")
 
 async def store_fixtures_to_db(fixtures_data: List[Dict[str, Any]]):
     now_ts = time.time()
@@ -342,7 +248,7 @@ async def load_future_fixtures() -> List[Dict[str, Any]]:
             return [dict(r) for r in rows]
 
 # -------------------------------------------------------------------
-# Module 1: READ (48-60h Horizon across 45+ Leagues)
+# Module 1: READ Pipeline
 # -------------------------------------------------------------------
 async def run_read_and_store_pipeline() -> Dict[str, Any]:
     if not ODDS_API_KEY:
@@ -439,15 +345,15 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
             "leagues": len(combined_league_pool)
         }
 
-    return {"success": False, "message": "Zero active fixtures found within the rolling horizon."}
+    return {"success": False, "message": "Zero active fixtures found within rolling horizon."}
 
 # -------------------------------------------------------------------
-# Module 2: PREDICT (Compact Low-Team Count Delivery Engine)
+# Module 2: PREDICT (High-Yield Generator for 100/200 Odds with <= 10 Teams)
 # -------------------------------------------------------------------
-async def generate_dynamic_slip(target_odds: float, max_odds: float, max_legs: int) -> str:
+async def generate_high_yield_slip(target_odds: float, max_legs: int) -> str:
     cached_matches = await load_future_fixtures()
     if not cached_matches:
-        return "⚠️ *Database empty.* Tap **📖 Read 48h Matches (Store DB)** first.[span_0](start_span)"[span_0](end_span)
+        return "⚠️ *Database empty.* Tap **📥 Fetch & Sync Matches** first[cite: 11]."
 
     evaluated = []
     for f in cached_matches:
@@ -455,7 +361,6 @@ async def generate_dynamic_slip(target_odds: float, max_odds: float, max_legs: i
         if cand:
             evaluated.append(cand)
 
-    # Sort descending by calculated probability
     evaluated.sort(key=lambda x: x["prob"], reverse=True)
 
     selected_legs = []
@@ -464,15 +369,11 @@ async def generate_dynamic_slip(target_odds: float, max_odds: float, max_legs: i
 
     for leg in evaluated:
         l_name = leg["league_name"]
-        # Allow up to 2 matches per league to avoid artificial match starvation
-        if league_counts.get(l_name, 0) >= 2:
-            continue
+        if league_counts.get(l_name, 0) >= 1:
+            continue  # Enforce 1 pick per league
 
         if len(selected_legs) >= max_legs:
             break
-
-        if (current_odds * leg["odds"]) > (max_odds * 1.20):
-            continue
 
         selected_legs.append(leg)
         league_counts[l_name] = league_counts.get(l_name, 0) + 1
@@ -481,18 +382,18 @@ async def generate_dynamic_slip(target_odds: float, max_odds: float, max_legs: i
         if current_odds >= target_odds:
             break
 
-    if len(selected_legs) < 2:
+    if len(selected_legs) < 4:
         return (
-            "⚠️ *Not enough qualifying matches for this ticket right now.*\n\n"
-            "Tap **📖 Read 48h Matches** later as bookmakers post new lines."
+            "⚠️ *Not enough high-yield fixtures available right now.*\n\n"
+            "Tap **📥 Fetch & Sync Matches** later as bookmakers post new lines."
         )
 
     target_label = int(target_odds)
     report = [
-        f"🎯 *COMPACT {target_label} ODDS SLIP ({len(selected_legs)} TEAMS ONLY)*",
-        f"⏱️ Window: `Today & Tomorrow`",
-        f"📈 Total Odds: `{current_odds:.2f}`",
-        f"🔒 Total Matches: `{len(selected_legs)} Games`",
+        f"🎯 *HIGH-YIELD {target_label} ODDS ACCUMULATOR*",
+        f"📊 *Strategy:* `Max {max_legs} Teams (High-Value Selections)`",
+        f"📈 *Total Combined Odds:* `{current_odds:.2f}`",
+        f"🔒 *Total Matches:* `{len(selected_legs)} Games`",
         "───────────────────────────\n"
     ]
 
@@ -505,19 +406,20 @@ async def generate_dynamic_slip(target_odds: float, max_odds: float, max_legs: i
         )
 
     report.append("───────────────────────────")
-    report.append("💡 *Compact format active. Staking rule: 0.5% – 1% bankroll unit.*")
+    report.append("💡 *Optimized for maximum payout with compact leg limits.*")
     return "\n".join(report)
 
 # -------------------------------------------------------------------
-# Telegram Keyboards & Router
+# Redesigned UI Keyboards & Router
 # -------------------------------------------------------------------
 def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("📖 Read 48h Matches (Store DB)", callback_data="btn_read")],
+        [InlineKeyboardButton("📥 Fetch & Sync Matches (48h)", callback_data="btn_read")],
         [
-            InlineKeyboardButton("🎯 5 Odds (3-4)", callback_data="pred_5"),
-            InlineKeyboardButton("🔥 10 Odds (5-6)", callback_data="pred_10"),
-            InlineKeyboardButton("🚀 20 Odds (7-8)", callback_data="pred_20")
+            InlineKeyboardButton("🔥 Generate 100 Odds (Max 9 Teams)", callback_data="pred_100")
+        ],
+        [
+            InlineKeyboardButton("🚀 Generate 200 Odds (Max 10 Teams)", callback_data="pred_200")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -525,12 +427,19 @@ def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await init_db()
     count = await get_cached_fixtures_count()
+    
+    welcome_text = (
+        "👑 *HIGH-YIELD ACCUMULATOR HUB*\n"
+        "───────────────────────────\n"
+        f"📊 *Database Status:* `{count} Matches Cached`\n\n"
+        "Welcome to your professional football analytics dashboard. "
+        "Our engine constructs high-payout accumulators using **10 or fewer teams**, "
+        "leveraging high-value selections (1.55 – 1.95 odds) to reduce parlay risks.\n\n"
+        "👇 *Select an action below to get started:*"
+    )
+    
     await update.message.reply_text(
-        f"⚽ *Compact Odds Accumulator Engine*\n\n"
-        f"📊 *Cached Matches Available:* `{count}`\n\n"
-        f"• **📖 Read 48h Matches**: Ingests upcoming fixtures across 45+ worldwide competitions into SQLite.\n"
-        f"• **Compact Policy**: 5 odds (3–4 teams), 10 odds (5–6 teams), and 20 odds (7–8 teams).\n\n"
-        f"Select your odds preference below:",
+        welcome_text,
         parse_mode="Markdown",
         reply_markup=build_main_keyboard(count)
     )
@@ -544,7 +453,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_read":
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="⏳ *Scanning 45+ global leagues for today & tomorrow's matches...*",
+            text="🔄 *Syncing global leagues... Please wait.*",
             parse_mode="Markdown"
         )
         res = await run_read_and_store_pipeline()
@@ -553,39 +462,42 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = await get_cached_fixtures_count()
         if res.get("success"):
             text = (
-                f"✅ *Matches Synchronized!*\n\n"
-                f"Indexed `{res['count']}` fixtures across `{res['leagues']}` competitions into SQLite.\n\n"
-                f"Select your desired odds slip below:"
+                "✅ *Synchronization Successful!*\n"
+                "───────────────────────────\n"
+                f"• **Indexed Fixtures:** `{res['count']}`\n"
+                f"• **Active Competitions:** `{res['leagues']}`\n\n"
+                "👇 *Choose your target high-yield slip below:*"
             )
         else:
-            text = f"⚠️ *Notice:* {res.get('message')}"
+            text = f"⚠️ *Sync Notice:* {res.get('message')}"
 
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=build_main_keyboard(count))
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=build_main_keyboard(count)
+        )
 
-    elif data in ["pred_5", "pred_10", "pred_20"]:
+    elif data in ["pred_100", "pred_200"]:
         count = await get_cached_fixtures_count()
         if count == 0:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⚠️ *No matches cached.* Tap **📖 Read 48h Matches (Store DB)** first.",
+                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Matches (48h)** first[cite: 11].",
                 parse_mode="Markdown",
                 reply_markup=build_main_keyboard(0)
             )
             return
 
-        config_map = {
-            "pred_5": (5.0, 7.5, 4),
-            "pred_10": (10.0, 14.0, 6),
-            "pred_20": (20.0, 26.0, 8)
-        }
-        target, maximum, max_legs = config_map[data]
+        target = 100.0 if data == "pred_100" else 200.0
+        max_legs = 9 if data == "pred_100" else 10
 
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⚙️ *Building compact ticket with max {max_legs} teams for ~{int(target)} odds...*",
+            text=f"⚙️ *Compounding high-value markets for ~{int(target)} odds slip (Max {max_legs} teams)...*",
             parse_mode="Markdown"
         )
-        report = await generate_dynamic_slip(target_odds=target, max_odds=maximum, max_legs=max_legs)
+        report = await generate_high_yield_slip(target_odds=target, max_legs=max_legs)
         await status.delete()
 
         await context.bot.send_message(
@@ -623,7 +535,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 Bot active with 45+ league discovery and compact parlay builder...")
+    print("🚀 High-Yield Bot active with redesigned UI...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
