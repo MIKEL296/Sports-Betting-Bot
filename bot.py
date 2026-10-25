@@ -30,25 +30,35 @@ DB_NAME = "multisport_predictions.db"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# Multi-Sport Target Keys across predictable categories
-SUPPORTED_MULTI_SPORTS = {
-    # Basketball (High predictability rank)
+# Comprehensive Multi-Sport League Mapping
+ALL_SUPPORTED_SPORTS = {
+    # Basketball
     "basketball_nba": "NBA (Basketball)",
     "basketball_euroleague": "EuroLeague (Basketball)",
-    # Tennis (Head-to-head 2-way market)
+    "basketball_ncaab": "NCAAB (Basketball)",
+    # Tennis
     "tennis_atp_us_open": "ATP Tennis",
     "tennis_wta_us_open": "WTA Tennis",
+    "tennis_atp_aus_open": "ATP Tennis",
+    "tennis_wta_aus_open": "WTA Tennis",
     # Ice Hockey
     "icehockey_nhl": "NHL (Ice Hockey)",
+    "icehockey_sweden_hockey_league": "SHL (Ice Hockey)",
     # Baseball
     "baseball_mlb": "MLB (Baseball)",
-    # Top Soccer Leagues
+    "baseball_kbo": "KBO (Baseball)",
+    # Soccer
     "soccer_epl": "Premier League (Soccer)",
     "soccer_spain_la_liga": "La Liga (Soccer)",
     "soccer_germany_bundesliga": "Bundesliga (Soccer)",
     "soccer_italy_serie_a": "Serie A (Soccer)",
     "soccer_france_ligue_one": "Ligue 1 (Soccer)",
-    "soccer_uefa_champs_league": "UEFA Champions League"
+    "soccer_uefa_champs_league": "UEFA Champions League",
+    "soccer_uefa_europa_league": "UEFA Europa League",
+    "soccer_netherlands_eredivisie": "Eredivisie (Soccer)",
+    "soccer_portugal_primeira_liga": "Primeira Liga (Soccer)",
+    "soccer_turkey_super_league": "Süper Lig (Soccer)",
+    "soccer_brazil_campeonato": "Série A (Soccer)"
 }
 
 def clean_md(text: str) -> str:
@@ -59,7 +69,7 @@ def clean_md(text: str) -> str:
     return " ".join(text.split())
 
 # -------------------------------------------------------------------
-# Probability Devigging (Supports 2-way and 3-way markets)
+# Probability Devigging Engine
 # -------------------------------------------------------------------
 def devig_power_method(odds_list: List[float]) -> List[float]:
     if not odds_list or any(o <= 1.0 for o in odds_list):
@@ -85,20 +95,19 @@ def devig_power_method(odds_list: List[float]) -> List[float]:
     return [p / total_fair for p in fair_probs]
 
 # -------------------------------------------------------------------
-# Multi-Sport Market Evaluation Engine
+# Universal Market Evaluator (Handles 2-way & 3-way sports cleanly)
 # -------------------------------------------------------------------
-def evaluate_multisport_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    outcomes_json = f["outcomes_json"]
+def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
-        outcomes = eval(outcomes_json)
+        outcomes = eval(f["outcomes_json"])
     except Exception:
         return None
 
     home_name = clean_md(f["home_team"])
     away_name = clean_md(f["away_team"])
-    sport_type = f["sport_key"]
+    sport_key = f["sport_key"]
 
-    # Handle 2-Way Markets (Tennis, Basketball, Hockey, Baseball Moneyline)
+    # --- CASE A: 2-Way Markets (Basketball, Tennis, Hockey, Baseball Moneyline) ---
     if len(outcomes) == 2:
         o1_name, o1_price = outcomes[0]["name"], float(outcomes[0]["price"])
         o2_name, o2_price = outcomes[1]["name"], float(outcomes[1]["price"])
@@ -108,17 +117,17 @@ def evaluate_multisport_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return None
 
         p1, p2 = probs[0], probs[1]
-
-        # Select favorite if probability >= 55% and odds in high-value range (1.45 - 1.95)
         candidates = []
-        if p1 >= 0.52 and 1.45 <= o1_price <= 1.95:
+
+        # Target value odds range (1.50 to 1.95) with strong probability support
+        if p1 >= 0.50 and 1.50 <= o1_price <= 1.95:
             candidates.append({
                 "pick": f"{clean_md(o1_name)} Win",
                 "category": "🎯 Moneyline",
                 "odds": o1_price,
                 "prob": p1
             })
-        if p2 >= 0.52 and 1.45 <= o2_price <= 1.95:
+        if p2 >= 0.50 and 1.50 <= o2_price <= 1.95:
             candidates.append({
                 "pick": f"{clean_md(o2_name)} Win",
                 "category": "🎯 Moneyline",
@@ -143,7 +152,7 @@ def evaluate_multisport_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
         return best
 
-    # Handle 3-Way Markets (Soccer 1X2)
+    # --- CASE B: 3-Way Markets (Soccer 1X2) ---
     elif len(outcomes) >= 3:
         home_price = next((float(o["price"]) for o in outcomes if o["name"] == f["home_team"]), None)
         away_price = next((float(o["price"]) for o in outcomes if o["name"] == f["away_team"]), None)
@@ -159,43 +168,20 @@ def evaluate_multisport_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         home_p, draw_p, away_p = probs[0], probs[1], probs[2]
         candidates = []
 
-        if home_p >= 0.48 and 1.50 <= home_price <= 1.92:
+        if home_p >= 0.48 and 1.50 <= home_price <= 1.95:
             candidates.append({
                 "pick": f"{home_name} to Win",
                 "category": "🏆 Soccer 1X2",
                 "odds": home_price,
                 "prob": home_p
             })
-        elif away_p >= 0.48 and 1.50 <= away_price <= 1.92:
+        elif away_p >= 0.48 and 1.50 <= away_price <= 1.95:
             candidates.append({
                 "pick": f"{away_name} to Win",
                 "category": "🏆 Soccer 1X2",
                 "odds": away_price,
                 "prob": away_p
             })
-
-        # Resilient Double Chance for Soccer
-        p_1x = home_p + draw_p
-        if 0.65 <= p_1x <= 0.78:
-            dc_odds = round(1.0 / (p_1x * 1.05), 2)
-            if 1.35 <= dc_odds <= 1.65:
-                candidates.append({
-                    "pick": f"{home_name} or Draw (1X)",
-                    "category": "🛡️ Double Chance",
-                    "odds": dc_odds,
-                    "prob": p_1x
-                })
-
-        p_x2 = away_p + draw_p
-        if 0.65 <= p_x2 <= 0.78:
-            dc_odds = round(1.0 / (p_x2 * 1.05), 2)
-            if 1.35 <= dc_odds <= 1.65:
-                candidates.append({
-                    "pick": f"Draw or {away_name} (X2)",
-                    "category": "🛡️ Double Chance",
-                    "odds": dc_odds,
-                    "prob": p_x2
-                })
 
         if not candidates:
             return None
@@ -222,7 +208,7 @@ def evaluate_multisport_market(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS multisport_fixtures (
+            CREATE TABLE IF NOT EXISTS universal_fixtures (
                 fixture_id TEXT PRIMARY KEY,
                 sport_key TEXT,
                 sport_name TEXT,
@@ -240,7 +226,7 @@ async def store_fixtures_to_db(fixtures_data: List[Dict[str, Any]]):
     async with aiosqlite.connect(DB_NAME) as db:
         for f in fixtures_data:
             await db.execute("""
-                INSERT INTO multisport_fixtures (
+                INSERT INTO universal_fixtures (
                     fixture_id, sport_key, sport_name, home_team, away_team, 
                     outcomes_json, commence_time, fetch_timestamp
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -262,7 +248,7 @@ async def get_cached_fixtures_count() -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT COUNT(*) FROM multisport_fixtures WHERE commence_time >= ?", (now_iso,)
+            "SELECT COUNT(*) FROM universal_fixtures WHERE commence_time >= ?", (now_iso,)
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
@@ -272,13 +258,13 @@ async def load_future_fixtures() -> List[Dict[str, Any]]:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM multisport_fixtures WHERE commence_time >= ? ORDER BY commence_time ASC", (now_iso,)
+            "SELECT * FROM universal_fixtures WHERE commence_time >= ? ORDER BY commence_time ASC", (now_iso,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
 # -------------------------------------------------------------------
-# Module 1: Multi-Sport READ Pipeline
+# Module 1: Ingest All Sports from API
 # -------------------------------------------------------------------
 async def run_read_and_store_pipeline() -> Dict[str, Any]:
     if not ODDS_API_KEY:
@@ -299,14 +285,14 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
                     sports_data = await s_resp.json()
                     for item in sports_data:
                         key = item.get("key", "")
-                        # Discover basketball, tennis, hockey, baseball, and soccer
+                        # Explicitly grab basketball, tennis, ice hockey, baseball, and soccer
                         if any(k in key for k in ["basketball_", "tennis_", "icehockey_", "baseball_", "soccer_"]) and item.get("active", False):
                             active_sports[key] = item.get("title", key)
         except Exception as e:
             logging.warning(f"Error querying active sports list: {e}")
 
-        combined_pool = {**SUPPORTED_MULTI_SPORTS, **active_sports}
-        sem = asyncio.Semaphore(7)
+        combined_pool = {**ALL_SUPPORTED_SPORTS, **active_sports}
+        sem = asyncio.Semaphore(8)
 
         async def fetch_sport_matches(sport_key: str, label: str):
             async with sem:
@@ -371,55 +357,56 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
             "sports": len(combined_pool)
         }
 
-    return {"success": False, "message": "Zero active fixtures found across multi-sport pool."}
+    return {"success": False, "message": "Zero active fixtures found across sports pool."}
 
 # -------------------------------------------------------------------
-# Module 2: Cross-Sport Non-Overlapping Expert Slips Generator
+# Module 2: Cross-Sport Non-Overlapping Slips Generator
 # -------------------------------------------------------------------
-def build_multisport_slip_subset(evaluated_candidates: List[Dict[str, Any]], consumed_fixtures: set, max_legs: int = 6) -> Tuple[List[Dict[str, Any]], float]:
+def build_universal_slip_subset(evaluated_candidates: List[Dict[str, Any]], consumed_fixtures: set, max_legs: int = 6) -> Tuple[List[Dict[str, Any]], float]:
     selected_legs = []
-    league_counts = {}
+    sport_counts = {}
     current_odds = 1.0
 
     for leg in evaluated_candidates:
         if leg["fixture_id"] in consumed_fixtures:
             continue
 
-        l_name = leg["league_name"]
-        # Limit per sport/league to ensure high cross-sport diversity
-        if league_counts.get(l_name, 0) >= 2:
+        sport_name = leg["league_name"]
+        # Limit matches per sport category to force genuine multi-sport mixing
+        if sport_counts.get(sport_name, 0) >= 2:
             continue
 
         if len(selected_legs) >= max_legs:
             break
 
         selected_legs.append(leg)
-        league_counts[l_name] = league_counts.get(l_name, 0) + 1
+        sport_counts[sport_name] = sport_counts.get(sport_name, 0) + 1
         consumed_fixtures.add(leg["fixture_id"])
         current_odds *= leg["odds"]
 
     return selected_legs, round(current_odds, 2)
 
-async def generate_multisport_expert_slips() -> List[str]:
+async def generate_universal_expert_slips() -> List[str]:
     cached_matches = await load_future_fixtures()
     if not cached_matches:
-        return ["⚠️ *Database empty.* Tap **📥 Fetch & Sync Multi-Sport** first."]
+        return ["⚠️ *Database empty.* Tap **📥 Fetch & Sync All Sports** first."]
 
     evaluated = []
     for f in cached_matches:
-        cand = evaluate_multisport_market(f)
+        cand = evaluate_market_across_sports(f)
         if cand:
             evaluated.append(cand)
 
+    # Sort descending by statistical confidence probability
     evaluated.sort(key=lambda x: x["prob"], reverse=True)
 
     consumed_fixtures = set()
 
-    # Slip 1 (Multi-Sport Value Slip)
-    slip_1_legs, slip_1_odds = build_multisport_slip_subset(evaluated, consumed_fixtures, max_legs=6)
+    # Slip 1 (Universal Expert Value Slip)
+    slip_1_legs, slip_1_odds = build_universal_slip_subset(evaluated, consumed_fixtures, max_legs=6)
 
-    # Slip 2 (Multi-Sport High-Yield Slip - Zero Overlap)
-    slip_2_legs, slip_2_odds = build_multisport_slip_subset(evaluated, consumed_fixtures, max_legs=6)
+    # Slip 2 (Universal Expert High-Yield Slip - Zero Overlap)
+    slip_2_legs, slip_2_odds = build_universal_slip_subset(evaluated, consumed_fixtures, max_legs=6)
 
     messages = []
     today_str = datetime.now(timezone.utc).strftime("%a, %d %b %Y")
@@ -427,7 +414,7 @@ async def generate_multisport_expert_slips() -> List[str]:
     # Format Slip 1
     if len(slip_1_legs) >= 3:
         card_1 = [
-            f"🎯 *MULTI-SPORT EXPERT SLIP 1*",
+            f"🎯 *CROSS-SPORT EXPERT SLIP 1*",
             f"📅 Date: `{today_str}`",
             f"📈 *Total Odds:* `{slip_1_odds:.2f}`",
             f"🔒 *Total Selections:* `{len(slip_1_legs)} Games`",
@@ -441,15 +428,15 @@ async def generate_multisport_expert_slips() -> List[str]:
                 f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
             )
         card_1.append("───────────────────────────")
-        card_1.append("💡 *Diversified across basketball, tennis, hockey, and soccer.*")
+        card_1.append("💡 *Blended selections across basketball, tennis, hockey, and soccer.*")
         messages.append("\n".join(card_1))
     else:
-        messages.append("⚠️ *Slip 1:* Not enough high-probability multi-sport matches available.")
+        messages.append("⚠️ *Slip 1:* Not enough high-probability matches across sports right now.")
 
     # Format Slip 2
     if len(slip_2_legs) >= 3:
         card_2 = [
-            f"🔥 *MULTI-SPORT EXPERT SLIP 2*",
+            f"🔥 *CROSS-SPORT EXPERT SLIP 2*",
             f"📅 Date: `{today_str}`",
             f"📈 *Total Odds:* `{slip_2_odds:.2f}`",
             f"🔒 *Total Selections:* `{len(slip_2_legs)} Games`",
@@ -463,7 +450,7 @@ async def generate_multisport_expert_slips() -> List[str]:
                 f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
             )
         card_2.append("───────────────────────────")
-        card_2.append("💡 *Zero fixture overlap with Slip 1 for maximum portfolio defense.*")
+        card_2.append("💡 *Zero fixture overlap with Slip 1 for maximum risk mitigation.*")
         messages.append("\n".join(card_2))
     else:
         messages.append("ℹ️ *Slip 2:* Need more distinct fixtures across sports for a second ticket.")
@@ -475,8 +462,8 @@ async def generate_multisport_expert_slips() -> List[str]:
 # -------------------------------------------------------------------
 def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("📥 Fetch & Sync Multi-Sport (72h)", callback_data="btn_read")],
-        [InlineKeyboardButton("🎯 Generate 2 Multi-Sport Expert Slips", callback_data="gen_multisport")]
+        [InlineKeyboardButton("📥 Fetch & Sync All Sports (72h)", callback_data="btn_read")],
+        [InlineKeyboardButton("🎯 Generate 2 Cross-Sport Expert Slips", callback_data="gen_cross_sport")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -485,12 +472,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = await get_cached_fixtures_count()
     
     welcome_text = (
-        "👑 *MULTI-SPORT PREDICTION ENGINE*\n"
+        "👑 *CROSS-SPORT PREDICTION HUB*\n"
         "───────────────────────────\n"
         f"📊 *Cached Fixtures:* `{count} Matches`\n\n"
-        "Welcome! This bot scans **Basketball, Tennis, Ice Hockey, Baseball, and Soccer** "
-        "to distribute selections across high-predictability sports[span_2](start_span)[span_2](end_span), lowering risk and generating **2 non-overlapping expert slips**.\n\n"
-        "👇 *Select an option below:*"
+        "Active engine scanning **Basketball, Tennis, Ice Hockey, Baseball, and Soccer** simultaneously. "
+        "It cuts across sports categories to balance variance and outputs **2 non-overlapping expert slips**[span_0](start_span)[span_0](end_span).\n\n"
+        "👇 *Select an action below:*"
     )
     
     await update.message.reply_text(
@@ -508,7 +495,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_read":
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="🔄 *Scanning Basketball, Tennis, Hockey, Baseball & Soccer markets...*",
+            text="🔄 *Syncing Basketball, Tennis, Hockey, Baseball & Soccer markets...*",
             parse_mode="Markdown"
         )
         res = await run_read_and_store_pipeline()
@@ -517,11 +504,11 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = await get_cached_fixtures_count()
         if res.get("success"):
             text = (
-                "✅ *Multi-Sport Sync Complete!*\n"
+                "✅ *Universal Sync Complete!*\n"
                 "───────────────────────────\n"
                 f"• **Total Fixtures:** `{res['count']}`\n"
-                f"• **Active Sports/Leagues:** `{res['sports']}`\n\n"
-                "👇 *Tap below to generate your multi-sport expert slips:*"
+                f"• **Scanned Categories:** `{res['sports']} Sports/Leagues`\n\n"
+                "👇 *Tap below to generate your cross-sport expert slips:*"
             )
         else:
             text = f"⚠️ *Sync Notice:* {res.get('message')}"
@@ -533,12 +520,12 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_main_keyboard(count)
         )
 
-    elif data == "gen_multisport":
+    elif data == "gen_cross_sport":
         count = await get_cached_fixtures_count()
         if count == 0:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Multi-Sport (72h)** first.",
+                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync All Sports (72h)** first.",
                 parse_mode="Markdown",
                 reply_markup=build_main_keyboard(0)
             )
@@ -546,10 +533,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="⚙️ *Analyzing multi-sport statistics and building non-overlapping expert slips...*",
+            text="⚙️ *Compounding cross-sport probabilities and formatting 2 non-overlapping expert slips...*",
             parse_mode="Markdown"
         )
-        reports = await generate_multisport_expert_slips()
+        reports = await generate_universal_expert_slips()
         await status.delete()
 
         for report_text in reports:
@@ -587,7 +574,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 Multi-Sport Prediction Bot active...")
+    print("🚀 Cross-Sport Prediction Bot active...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
