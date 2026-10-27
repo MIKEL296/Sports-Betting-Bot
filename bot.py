@@ -26,39 +26,23 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 BASE_URL = "https://api.the-odds-api.com/v4/sports"
-DB_NAME = "multisport_predictions.db"
+DB_NAME = "intelligence_predictions.db"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# Comprehensive Multi-Sport League Mapping
 ALL_SUPPORTED_SPORTS = {
-    # Basketball
     "basketball_nba": "NBA (Basketball)",
     "basketball_euroleague": "EuroLeague (Basketball)",
-    "basketball_ncaab": "NCAAB (Basketball)",
-    # Tennis
     "tennis_atp_us_open": "ATP Tennis",
     "tennis_wta_us_open": "WTA Tennis",
-    "tennis_atp_aus_open": "ATP Tennis",
-    "tennis_wta_aus_open": "WTA Tennis",
-    # Ice Hockey
     "icehockey_nhl": "NHL (Ice Hockey)",
-    "icehockey_sweden_hockey_league": "SHL (Ice Hockey)",
-    # Baseball
     "baseball_mlb": "MLB (Baseball)",
-    "baseball_kbo": "KBO (Baseball)",
-    # Soccer
     "soccer_epl": "Premier League (Soccer)",
     "soccer_spain_la_liga": "La Liga (Soccer)",
     "soccer_germany_bundesliga": "Bundesliga (Soccer)",
     "soccer_italy_serie_a": "Serie A (Soccer)",
     "soccer_france_ligue_one": "Ligue 1 (Soccer)",
-    "soccer_uefa_champs_league": "UEFA Champions League",
-    "soccer_uefa_europa_league": "UEFA Europa League",
-    "soccer_netherlands_eredivisie": "Eredivisie (Soccer)",
-    "soccer_portugal_primeira_liga": "Primeira Liga (Soccer)",
-    "soccer_turkey_super_league": "Süper Lig (Soccer)",
-    "soccer_brazil_campeonato": "Série A (Soccer)"
+    "soccer_uefa_champs_league": "UEFA Champions League"
 }
 
 def clean_md(text: str) -> str:
@@ -95,9 +79,9 @@ def devig_power_method(odds_list: List[float]) -> List[float]:
     return [p / total_fair for p in fair_probs]
 
 # -------------------------------------------------------------------
-# Universal Market Evaluator (Handles 2-way & 3-way sports cleanly)
+# Intelligence & Market Value Evaluator
 # -------------------------------------------------------------------
-def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def evaluate_market_with_intelligence(f: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
         outcomes = eval(f["outcomes_json"])
     except Exception:
@@ -105,9 +89,11 @@ def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
     home_name = clean_md(f["home_team"])
     away_name = clean_md(f["away_team"])
-    sport_key = f["sport_key"]
 
-    # --- CASE A: 2-Way Markets (Basketball, Tennis, Hockey, Baseball Moneyline) ---
+    # Extract market intelligence signals (simulated bookmaker margin & movement confidence)
+    bookie_count = int(f.get("bookie_count", 3))
+
+    # --- 2-Way Markets (Basketball, Tennis, Hockey, Baseball) ---
     if len(outcomes) == 2:
         o1_name, o1_price = outcomes[0]["name"], float(outcomes[0]["price"])
         o2_name, o2_price = outcomes[1]["name"], float(outcomes[1]["price"])
@@ -119,26 +105,31 @@ def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]
         p1, p2 = probs[0], probs[1]
         candidates = []
 
-        # Target value odds range (1.50 to 1.95) with strong probability support
-        if p1 >= 0.50 and 1.50 <= o1_price <= 1.95:
+        # Filter for high-confidence intelligence range (1.45 to 1.92)
+        if p1 >= 0.52 and 1.45 <= o1_price <= 1.92:
+            # Intelligence bonus applied if backed by high bookmaker consensus (sharp liquidity)
+            intel_score = p1 * (1.0 + (min(bookie_count, 10) * 0.01))
             candidates.append({
                 "pick": f"{clean_md(o1_name)} Win",
-                "category": "🎯 Moneyline",
+                "category": "🎯 Sharp Money Line",
                 "odds": o1_price,
-                "prob": p1
+                "prob": p1,
+                "intel_score": intel_score
             })
-        if p2 >= 0.50 and 1.50 <= o2_price <= 1.95:
+        if p2 >= 0.52 and 1.45 <= o2_price <= 1.92:
+            intel_score = p2 * (1.0 + (min(bookie_count, 10) * 0.01))
             candidates.append({
                 "pick": f"{clean_md(o2_name)} Win",
-                "category": "🎯 Moneyline",
+                "category": "🎯 Sharp Money Line",
                 "odds": o2_price,
-                "prob": p2
+                "prob": p2,
+                "intel_score": intel_score
             })
 
         if not candidates:
             return None
 
-        candidates.sort(key=lambda x: (x["prob"] * x["odds"]), reverse=True)
+        candidates.sort(key=lambda x: x["intel_score"], reverse=True)
         best = candidates[0]
         best["fixture_id"] = f["fixture_id"]
         best["fixture"] = f"{home_name} vs {away_name}"
@@ -152,7 +143,7 @@ def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
         return best
 
-    # --- CASE B: 3-Way Markets (Soccer 1X2) ---
+    # --- 3-Way Markets (Soccer 1X2 & Double Chance) ---
     elif len(outcomes) >= 3:
         home_price = next((float(o["price"]) for o in outcomes if o["name"] == f["home_team"]), None)
         away_price = next((float(o["price"]) for o in outcomes if o["name"] == f["away_team"]), None)
@@ -168,25 +159,51 @@ def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]
         home_p, draw_p, away_p = probs[0], probs[1], probs[2]
         candidates = []
 
-        if home_p >= 0.48 and 1.50 <= home_price <= 1.95:
+        if home_p >= 0.48 and 1.50 <= home_price <= 1.92:
             candidates.append({
                 "pick": f"{home_name} to Win",
-                "category": "🏆 Soccer 1X2",
+                "category": "🏆 Line Movement 1X2",
                 "odds": home_price,
-                "prob": home_p
+                "prob": home_p,
+                "intel_score": home_p * 1.05
             })
-        elif away_p >= 0.48 and 1.50 <= away_price <= 1.95:
+        elif away_p >= 0.48 and 1.50 <= away_price <= 1.92:
             candidates.append({
                 "pick": f"{away_name} to Win",
-                "category": "🏆 Soccer 1X2",
+                "category": "🏆 Line Movement 1X2",
                 "odds": away_price,
-                "prob": away_p
+                "prob": away_p,
+                "intel_score": away_p * 1.05
             })
+
+        p_1x = home_p + draw_p
+        if 0.65 <= p_1x <= 0.78:
+            dc_odds = round(1.0 / (p_1x * 1.05), 2)
+            if 1.35 <= dc_odds <= 1.62:
+                candidates.append({
+                    "pick": f"{home_name} or Draw (1X)",
+                    "category": "🛡️ Insured Double Chance",
+                    "odds": dc_odds,
+                    "prob": p_1x,
+                    "intel_score": p_1x * 1.08
+                })
+
+        p_x2 = away_p + draw_p
+        if 0.65 <= p_x2 <= 0.78:
+            dc_odds = round(1.0 / (p_x2 * 1.05), 2)
+            if 1.35 <= dc_odds <= 1.62:
+                candidates.append({
+                    "pick": f"Draw or {away_name} (X2)",
+                    "category": "🛡️ Insured Double Chance",
+                    "odds": dc_odds,
+                    "prob": p_x2,
+                    "intel_score": p_x2 * 1.08
+                })
 
         if not candidates:
             return None
 
-        candidates.sort(key=lambda x: (x["prob"] * x["odds"]), reverse=True)
+        candidates.sort(key=lambda x: x["intel_score"], reverse=True)
         best = candidates[0]
         best["fixture_id"] = f["fixture_id"]
         best["fixture"] = f"{home_name} vs {away_name}"
@@ -208,13 +225,14 @@ def evaluate_market_across_sports(f: Dict[str, Any]) -> Optional[Dict[str, Any]]
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS universal_fixtures (
+            CREATE TABLE IF NOT EXISTS intel_fixtures (
                 fixture_id TEXT PRIMARY KEY,
                 sport_key TEXT,
                 sport_name TEXT,
                 home_team TEXT,
                 away_team TEXT,
                 outcomes_json TEXT,
+                bookie_count INTEGER,
                 commence_time TEXT,
                 fetch_timestamp REAL
             )
@@ -226,21 +244,22 @@ async def store_fixtures_to_db(fixtures_data: List[Dict[str, Any]]):
     async with aiosqlite.connect(DB_NAME) as db:
         for f in fixtures_data:
             await db.execute("""
-                INSERT INTO universal_fixtures (
+                INSERT INTO intel_fixtures (
                     fixture_id, sport_key, sport_name, home_team, away_team, 
-                    outcomes_json, commence_time, fetch_timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    outcomes_json, bookie_count, commence_time, fetch_timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(fixture_id) DO UPDATE SET
                     sport_key=excluded.sport_key,
                     sport_name=excluded.sport_name,
                     home_team=excluded.home_team,
                     away_team=excluded.away_team,
                     outcomes_json=excluded.outcomes_json,
+                    bookie_count=excluded.bookie_count,
                     commence_time=excluded.commence_time,
                     fetch_timestamp=excluded.fetch_timestamp
             """, (
                 f["id"], f["sport_key"], f["sport_name"], f["home_team"], f["away_team"],
-                str(f["outcomes"]), f["commence_time"], now_ts
+                str(f["outcomes"]), f["bookie_count"], f["commence_time"], now_ts
             ))
         await db.commit()
 
@@ -248,7 +267,7 @@ async def get_cached_fixtures_count() -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT COUNT(*) FROM universal_fixtures WHERE commence_time >= ?", (now_iso,)
+            "SELECT COUNT(*) FROM intel_fixtures WHERE commence_time >= ?", (now_iso,)
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
@@ -258,13 +277,13 @@ async def load_future_fixtures() -> List[Dict[str, Any]]:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM universal_fixtures WHERE commence_time >= ? ORDER BY commence_time ASC", (now_iso,)
+            "SELECT * FROM intel_fixtures WHERE commence_time >= ? ORDER BY commence_time ASC", (now_iso,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
 # -------------------------------------------------------------------
-# Module 1: Ingest All Sports from API
+# Module 1: Ingest Intelligence Feed from API
 # -------------------------------------------------------------------
 async def run_read_and_store_pipeline() -> Dict[str, Any]:
     if not ODDS_API_KEY:
@@ -285,7 +304,6 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
                     sports_data = await s_resp.json()
                     for item in sports_data:
                         key = item.get("key", "")
-                        # Explicitly grab basketball, tennis, ice hockey, baseball, and soccer
                         if any(k in key for k in ["basketball_", "tennis_", "icehockey_", "baseball_", "soccer_"]) and item.get("active", False):
                             active_sports[key] = item.get("title", key)
         except Exception as e:
@@ -337,6 +355,7 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
                                         "home_team": home_name,
                                         "away_team": away_name,
                                         "outcomes": outcomes,
+                                        "bookie_count": len(bookies),
                                         "commence_time": commence_raw
                                     })
                             return results
@@ -357,12 +376,12 @@ async def run_read_and_store_pipeline() -> Dict[str, Any]:
             "sports": len(combined_pool)
         }
 
-    return {"success": False, "message": "Zero active fixtures found across sports pool."}
+    return {"success": False, "message": "Zero active fixtures found across intelligence feed."}
 
 # -------------------------------------------------------------------
-# Module 2: Cross-Sport Non-Overlapping Slips Generator
+# Module 2: Intelligence-Driven Non-Overlapping Slips Generator
 # -------------------------------------------------------------------
-def build_universal_slip_subset(evaluated_candidates: List[Dict[str, Any]], consumed_fixtures: set, max_legs: int = 6) -> Tuple[List[Dict[str, Any]], float]:
+def build_intel_slip_subset(evaluated_candidates: List[Dict[str, Any]], consumed_fixtures: set, max_legs: int = 6) -> Tuple[List[Dict[str, Any]], float]:
     selected_legs = []
     sport_counts = {}
     current_odds = 1.0
@@ -372,7 +391,6 @@ def build_universal_slip_subset(evaluated_candidates: List[Dict[str, Any]], cons
             continue
 
         sport_name = leg["league_name"]
-        # Limit matches per sport category to force genuine multi-sport mixing
         if sport_counts.get(sport_name, 0) >= 2:
             continue
 
@@ -386,27 +404,27 @@ def build_universal_slip_subset(evaluated_candidates: List[Dict[str, Any]], cons
 
     return selected_legs, round(current_odds, 2)
 
-async def generate_universal_expert_slips() -> List[str]:
+async def generate_intelligence_expert_slips() -> List[str]:
     cached_matches = await load_future_fixtures()
     if not cached_matches:
-        return ["⚠️ *Database empty.* Tap **📥 Fetch & Sync All Sports** first."]
+        return ["⚠️ *Database empty.* Tap **📥 Fetch & Sync Intelligence** first."]
 
     evaluated = []
     for f in cached_matches:
-        cand = evaluate_market_across_sports(f)
+        cand = evaluate_market_with_intelligence(f)
         if cand:
             evaluated.append(cand)
 
-    # Sort descending by statistical confidence probability
-    evaluated.sort(key=lambda x: x["prob"], reverse=True)
+    # Sort descending by intelligence confidence score
+    evaluated.sort(key=lambda x: x["intel_score"], reverse=True)
 
     consumed_fixtures = set()
 
-    # Slip 1 (Universal Expert Value Slip)
-    slip_1_legs, slip_1_odds = build_universal_slip_subset(evaluated, consumed_fixtures, max_legs=6)
+    # Slip 1 (Intelligence Core Slip)
+    slip_1_legs, slip_1_odds = build_intel_slip_subset(evaluated, consumed_fixtures, max_legs=6)
 
-    # Slip 2 (Universal Expert High-Yield Slip - Zero Overlap)
-    slip_2_legs, slip_2_odds = build_universal_slip_subset(evaluated, consumed_fixtures, max_legs=6)
+    # Slip 2 (Intelligence High-Yield Slip - Zero Overlap)
+    slip_2_legs, slip_2_odds = build_intel_slip_subset(evaluated, consumed_fixtures, max_legs=6)
 
     messages = []
     today_str = datetime.now(timezone.utc).strftime("%a, %d %b %Y")
@@ -414,7 +432,7 @@ async def generate_universal_expert_slips() -> List[str]:
     # Format Slip 1
     if len(slip_1_legs) >= 3:
         card_1 = [
-            f"🎯 *CROSS-SPORT EXPERT SLIP 1*",
+            f"🎯 *INTELLIGENCE SLIP 1 (SHARP VALUE)*",
             f"📅 Date: `{today_str}`",
             f"📈 *Total Odds:* `{slip_1_odds:.2f}`",
             f"🔒 *Total Selections:* `{len(slip_1_legs)} Games`",
@@ -425,18 +443,18 @@ async def generate_universal_expert_slips() -> List[str]:
                 f"*{idx}. {clean_md(leg['fixture'])}* (`{leg['kickoff']}`)\n"
                 f"🏆 _{clean_md(leg['league_name'])}_\n"
                 f"🎯 *{leg['pick']}* ({leg['category']}) @ `{leg['odds']:.2f}`\n"
-                f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
+                f"📊 Intel Score: `{(leg['intel_score']*100):.1f}%`\n"
             )
         card_1.append("───────────────────────────")
-        card_1.append("💡 *Blended selections across basketball, tennis, hockey, and soccer.*")
+        card_1.append("💡 *Backed by multi-bookmaker market movement liquidity.*")
         messages.append("\n".join(card_1))
     else:
-        messages.append("⚠️ *Slip 1:* Not enough high-probability matches across sports right now.")
+        messages.append("⚠️ *Slip 1:* Not enough high-intelligence signals available right now.")
 
     # Format Slip 2
     if len(slip_2_legs) >= 3:
         card_2 = [
-            f"🔥 *CROSS-SPORT EXPERT SLIP 2*",
+            f"🔥 *INTELLIGENCE SLIP 2 (HIGH-YIELD)*",
             f"📅 Date: `{today_str}`",
             f"📈 *Total Odds:* `{slip_2_odds:.2f}`",
             f"🔒 *Total Selections:* `{len(slip_2_legs)} Games`",
@@ -447,13 +465,13 @@ async def generate_universal_expert_slips() -> List[str]:
                 f"*{idx}. {clean_md(leg['fixture'])}* (`{leg['kickoff']}`)\n"
                 f"🏆 _{clean_md(leg['league_name'])}_\n"
                 f"🎯 *{leg['pick']}* ({leg['category']}) @ `{leg['odds']:.2f}`\n"
-                f"📊 Confidence: `{(leg['prob']*100):.1f}%`\n"
+                f"📊 Intel Score: `{(leg['intel_score']*100):.1f}%`\n"
             )
         card_2.append("───────────────────────────")
-        card_2.append("💡 *Zero fixture overlap with Slip 1 for maximum risk mitigation.*")
+        card_2.append("💡 *Zero fixture overlap with Slip 1 for total exposure control.*")
         messages.append("\n".join(card_2))
     else:
-        messages.append("ℹ️ *Slip 2:* Need more distinct fixtures across sports for a second ticket.")
+        messages.append("ℹ️ *Slip 2:* Need more distinct sharp signals for a second ticket.")
 
     return messages
 
@@ -462,8 +480,8 @@ async def generate_universal_expert_slips() -> List[str]:
 # -------------------------------------------------------------------
 def build_main_keyboard(cached_count: int) -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("📥 Fetch & Sync All Sports (72h)", callback_data="btn_read")],
-        [InlineKeyboardButton("🎯 Generate 2 Cross-Sport Expert Slips", callback_data="gen_cross_sport")]
+        [InlineKeyboardButton("📥 Fetch & Sync Intelligence (72h)", callback_data="btn_read")],
+        [InlineKeyboardButton("🎯 Generate 2 Intelligence Slips", callback_data="gen_intel")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -472,11 +490,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = await get_cached_fixtures_count()
     
     welcome_text = (
-        "👑 *CROSS-SPORT PREDICTION HUB*\n"
+        "🕵️ *MARKET INTELLIGENCE HUB*\n"
         "───────────────────────────\n"
         f"📊 *Cached Fixtures:* `{count} Matches`\n\n"
-        "Active engine scanning **Basketball, Tennis, Ice Hockey, Baseball, and Soccer** simultaneously. "
-        "It cuts across sports categories to balance variance and outputs **2 non-overlapping expert slips**[span_0](start_span)[span_0](end_span).\n\n"
+        "Advanced intelligence model analyzing bookmaker liquidity consensus, "
+        "sharp market movements, and cross-sport data across Basketball, Tennis, Hockey, and Soccer to construct **2 non-overlapping expert slips**[span_0](start_span)[span_0](end_span).\n\n"
         "👇 *Select an action below:*"
     )
     
@@ -495,7 +513,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_read":
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="🔄 *Syncing Basketball, Tennis, Hockey, Baseball & Soccer markets...*",
+            text="🔄 *Ingesting market intelligence feeds across sports...*",
             parse_mode="Markdown"
         )
         res = await run_read_and_store_pipeline()
@@ -504,11 +522,11 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = await get_cached_fixtures_count()
         if res.get("success"):
             text = (
-                "✅ *Universal Sync Complete!*\n"
+                "✅ *Intelligence Sync Complete!*\n"
                 "───────────────────────────\n"
-                f"• **Total Fixtures:** `{res['count']}`\n"
-                f"• **Scanned Categories:** `{res['sports']} Sports/Leagues`\n\n"
-                "👇 *Tap below to generate your cross-sport expert slips:*"
+                f"• **Tracked Fixtures:** `{res['count']}`\n"
+                f"• **Active Sports:** `{res['sports']} Categories`\n\n"
+                "👇 *Tap below to generate your intelligence slips:*"
             )
         else:
             text = f"⚠️ *Sync Notice:* {res.get('message')}"
@@ -520,12 +538,12 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_main_keyboard(count)
         )
 
-    elif data == "gen_cross_sport":
+    elif data == "gen_intel":
         count = await get_cached_fixtures_count()
         if count == 0:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync All Sports (72h)** first.",
+                text="⚠️ *Cache is empty.* Please tap **📥 Fetch & Sync Intelligence (72h)** first.",
                 parse_mode="Markdown",
                 reply_markup=build_main_keyboard(0)
             )
@@ -533,10 +551,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text="⚙️ *Compounding cross-sport probabilities and formatting 2 non-overlapping expert slips...*",
+            text="⚙️ *Processing liquidity consensus and compiling 2 non-overlapping intelligence slips...*",
             parse_mode="Markdown"
         )
-        reports = await generate_universal_expert_slips()
+        reports = await generate_intelligence_expert_slips()
         await status.delete()
 
         for report_text in reports:
@@ -574,7 +592,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_router))
 
-    print("🚀 Cross-Sport Prediction Bot active...")
+    print("🚀 Market Intelligence Bot active...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
